@@ -1,3 +1,86 @@
 # BMEG 310 Final Project 
 Group 31: Monesha Basker, Gaurab Acharya, Ellie Smith
 
+## Part 0 Loading Libraries
+```{r}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+```
+
+## Part 0.1 Loading data 
+```{r}
+clinical_data <- read.table("Data/data_clinical_patient.txt", 
+                            header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+mutation_data <- read.table("Data/data_mutations.txt", 
+                            header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+
+expression_data <- read.csv("Data/RNAseq_KIRC.csv", 
+                            header = TRUE, stringsAsFactors = FALSE)
+```
+
+## 0.2 Getting Patients that are in all data
+```{r}
+# Unique clinical patient ids
+clinical_patient_ids <- unique(clinical_data$PATIENT_ID)
+
+# Getting unique patient ids in mutation data
+patients_in_mutation <- mutation_data$Tumor_Sample_Barcode
+unique_patients_in_mutation <- unique(patients_in_mutation)
+for (i in 1:length(unique_patients_in_mutation)) {
+  string <- unique_patients_in_mutation[i]
+  split_string <- unlist(strsplit(string, "-"))
+  result <- paste(split_string[1:3], collapse = "-")
+  unique_patients_in_mutation[i] <- result
+}
+
+# Getting unique patient ids in rnaseq data
+patients_in_rnaseq <- colnames(expression_data)
+patients_in_rnaseq <- patients_in_rnaseq[-1]
+unique_rnaseq_patients <- list()
+for (string in patients_in_rnaseq) {
+  split_string <- unlist(strsplit(string, "\\."))
+  result <- paste(split_string[1:3], collapse = ".")
+  result <- gsub("\\.", "-", result)
+  if (!(result %in% unique_rnaseq_patients)) {
+    unique_rnaseq_patients <- append(unique_rnaseq_patients, result)
+  }
+}
+
+common_patient_ids <- list()
+
+for(patient in clinical_patient_ids) {
+  if ((patient %in% unique_patients_in_mutation) &
+      (patient %in% unique_rnaseq_patients)) {
+    common_patient_ids <- append(common_patient_ids, patient)
+  }
+}
+
+```
+
+## 0.3 Changing Dataset to include patient id's 
+```{r}
+# Mutation data with Patient ID's
+mutation_data <- mutation_data %>% 
+  mutate(PATIENT_ID = str_extract(Tumor_Sample_Barcode, "^[^-]+-[^-]+-[^-]+"))
+
+# Creating New rna_seq data 
+patients_in_rnaseq <- colnames(expression_data)
+patients_in_rnaseq <- patients_in_rnaseq[-1]
+  
+processed_colnames <- patients_in_rnaseq %>%
+  sapply(function(string) {
+    split_string <- unlist(strsplit(string, "\\."))
+    result <- paste(split_string[1:3], collapse = ".")
+    gsub("\\.", "-", result)  # Replace "." with "-"
+  })
+
+# New Expression / rna_seq aata with columns as Patient Id's
+rna_seq_data <- expression_data
+colnames(rna_seq_data)[-1] <- processed_colnames
+```
+
+
+
+
