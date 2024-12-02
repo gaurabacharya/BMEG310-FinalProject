@@ -81,6 +81,321 @@ rna_seq_data <- expression_data
 colnames(rna_seq_data)[-1] <- processed_colnames
 ```
 
+## 0.4 Explore Clinical Data for Survival Analysis 
+```{r}
+table(clinical_data$OS_STATUS)
+table(clinical_data$AJCC_PATHOLOGIC_TUMOR_STAGE)
+table(clinical_data$PERSON_NEOPLASM_CANCER_STATUS)
+
+filtered_data <- clinical_data %>%
+  filter(clinical_data$PATIENT_ID %in% common_patient_ids)
 
 
+ggplot(filtered_data, aes(x = "Cases", y = AGE)) +
+  geom_boxplot(fill = "salmon") +
+  labs(title = "Age Distribution of Cases with Complete Data", y = "Age") +
+  theme_minimal()
 
+non_synonymous_data <- mutation_data %>%
+  filter(Variant_Classification %in% c("Missense_Mutation", "Nonsense_Mutation",
+                                       "Frame_Shift_Del", "Frame_Shift_Ins"))
+patients_in_mutation <- non_synonymous_data$Tumor_Sample_Barcode
+
+for (i in 1:length(patients_in_mutation)) {
+  string <- patients_in_mutation[i]
+  split_string <- unlist(strsplit(string, "-"))
+  result <- paste(split_string[1:3], collapse = "-")
+  patients_in_mutation[i] <- result
+}
+
+non_synonymous_data$Patient_ID <- patients_in_mutation
+
+mutation_counts <- non_synonymous_data %>%
+  group_by(Patient_ID) %>%
+  summarise(non_syn_mutations = n()) %>%
+  filter(Patient_ID %in% common_patient_ids)
+
+ggplot(mutation_counts, aes(x = Patient_ID, y = non_syn_mutations)) +
+  geom_bar(stat = "identity", fill = "salmon") +
+  labs(title = "Non-synonymous Mutations per Patient", 
+       x = "Patient ID", y = "Number of Non-synonymous Mutations") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
+
+# 1.0 Clinical Data Analysis 
+
+## 1.1 Mutate Clinical Data by changing char columns to int boolean expressions
+```{r}
+# DSS -> Dead or alive without tumor = 0, Deceased with Tumor = 1
+# OS -> Alive = 0, Deceased = 1 
+#DFS -> DeceaseFree = 0, Recurred/Progressed = 1
+#PFS -> Censored = 0, Progression = 1 
+clinical_data <- clinical_data %>% 
+  mutate(DSS_STATUS_BOOL = as.numeric(str_split(DSS_STATUS, ":", simplify = TRUE)[, 1]),
+         OS_STATUS_BOOL = as.numeric(str_split(OS_STATUS, ":", simplify = TRUE)[, 1]),
+         DFS_STATUS_BOOL = as.numeric(str_split(DFS_STATUS, ":", simplify = TRUE)[, 1]),
+         PFS_STATUS_BOOL = as.numeric(str_split(PFS_STATUS, ":", simplify = TRUE)[, 1])
+         )
+```
+
+## 1.2 Get Required Data 
+```{r}
+clin_data <- clinical_data[clinical_data$PERSON_NEOPLASM_CANCER_STATUS 
+                           == "With Tumor",
+                           c("PATIENT_ID", 
+                             "OS_STATUS",
+                             "OS_MONTHS",
+                             "DAYS_LAST_FOLLOWUP",
+                             "AJCC_PATHOLOGIC_TUMOR_STAGE",
+                             "SEX",
+                             "DSS_STATUS",
+                             "DSS_MONTHS",
+                             "PFS_STATUS",
+                             "PFS_MONTHS",
+                             "GENETIC_ANCESTRY_LABEL",
+                             "RACE"
+                             )]
+
+```
+
+Survival Analysis Libraries
+```{r}
+library("survival")
+library("survminer")
+library("SummarizedExperiment")
+```
+Survival Analysis with OS_STATUS 
+```{r}
+clin_data$deceased = clin_data$OS_STATUS == "1:DECEASED"
+
+clin_data$overall_survival = ifelse(clin_data$deceased,
+                                   clin_data$OS_MONTHS,
+                                   clin_data$DAYS_LAST_FOLLOWUP)
+
+columns_to_analyze <- list(clin_data$AJCC_PATHOLOGIC_TUMOR_STAGE,
+                        clin_data$SEX,
+                        clin_data$GENETIC_ANCESTRY_LABEL,
+                        clin_data$RACE)
+# Tumor Stage
+fit <- survfit(Surv(overall_survival, deceased) ~ AJCC_PATHOLOGIC_TUMOR_STAGE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Tumor Stage")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "OS-STATUS_","Tumor-Stage", ".png"),
+       plot = plot$plot, bg = "white")
+# Sex
+fit <- survfit(Surv(overall_survival, deceased) ~ SEX,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Sex")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "OS-STATUS_","Sex", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Genetic Ancestry 
+fit <- survfit(Surv(overall_survival, deceased) ~ GENETIC_ANCESTRY_LABEL,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Genetic Ancestry")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "OS-STATUS_","Genetic-Ancestry", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Race 
+fit <- survfit(Surv(overall_survival, deceased) ~ RACE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Race")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "OS-STATUS_","Race", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+```
+Survival Analysis with DSS_STATUS 
+```{r}
+clin_data$deceased = clin_data$DSS_STATUS == "1:DEAD WITH TUMOR"
+
+clin_data$overall_survival = ifelse(clin_data$deceased,
+                                   clin_data$DSS_MONTHS,
+                                   clin_data$DAYS_LAST_FOLLOWUP)
+
+# Tumor Stage
+fit <- survfit(Surv(overall_survival, deceased) ~ AJCC_PATHOLOGIC_TUMOR_STAGE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Tumor Stage")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "DSS-STATUS_","Tumor-Stage", ".png"),
+       plot = plot$plot, bg = "white")
+# Sex
+fit <- survfit(Surv(overall_survival, deceased) ~ SEX,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Sex")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "DSS-STATUS_","Sex", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Genetic Ancestry 
+fit <- survfit(Surv(overall_survival, deceased) ~ GENETIC_ANCESTRY_LABEL,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Genetic Ancestry")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "DSS-STATUS_","Genetic-Ancestry", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Race 
+fit <- survfit(Surv(overall_survival, deceased) ~ RACE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Race")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "DSS-STATUS_","Race", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+```
+
+Survival Analysis with PFS_STATUS 
+```{r}
+clin_data$deceased = clin_data$PFS_STATUS == "1:PROGRESSION"
+
+clin_data$overall_survival = ifelse(clin_data$deceased,
+                                   clin_data$PFS_MONTHS,
+                                   clin_data$DAYS_LAST_FOLLOWUP)
+
+# Tumor Stage
+fit <- survfit(Surv(overall_survival, deceased) ~ AJCC_PATHOLOGIC_TUMOR_STAGE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Tumor Stage")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "PFS-STATUS_","Tumor-Stage", ".png"),
+       plot = plot$plot, bg = "white")
+# Sex
+fit <- survfit(Surv(overall_survival, deceased) ~ SEX,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Sex")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "PFS-STATUS_","Sex", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Genetic Ancestry 
+fit <- survfit(Surv(overall_survival, deceased) ~ GENETIC_ANCESTRY_LABEL,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Genetic Ancestry")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "PFS-STATUS_","Genetic-Ancestry", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+# Race 
+fit <- survfit(Surv(overall_survival, deceased) ~ RACE,
+               data=clin_data)
+plot <- ggsurvplot(
+  fit,
+  data = clin_data,
+  pval = TRUE,
+  risk.table = TRUE,         
+  risk.table.col = "strata",
+  risk.table.height = 0.4,  
+  ggtheme = theme_minimal(), 
+  title = paste("Survival Analysis by Race")
+)
+print(plot)
+ggsave(filename = paste0("survivalplots/", "PFS-STATUS_","Race", ".png"),
+       plot = plot$plot, width = 8, height = 6, bg = "white")
+
+
+```
